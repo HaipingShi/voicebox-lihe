@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 from .. import models
 from ..services import history, profiles, tts
-from ..database import Generation as DBGeneration, VoiceProfile as DBVoiceProfile, get_db
+from ..database import Generation as DBGeneration, VoiceProfile as DBVoiceProfile, SessionLocal, get_db
 from ..services.generation import run_generation
 from ..services.task_queue import enqueue_generation
 from ..utils.tasks import get_task_manager
@@ -188,29 +188,32 @@ async def regenerate_generation(generation_id: str, db: Session = Depends(get_db
 
 
 @router.get("/generate/{generation_id}/status")
-async def get_generation_status(generation_id: str, db: Session = Depends(get_db)):
+async def get_generation_status(generation_id: str):
     """SSE endpoint that streams generation status updates."""
     import json
 
     async def event_stream():
         try:
             while True:
-                db.expire_all()
-                gen = db.query(DBGeneration).filter_by(id=generation_id).first()
-                if not gen:
-                    yield f"data: {json.dumps({'status': 'not_found', 'id': generation_id})}\n\n"
-                    return
+                db = SessionLocal()
+                try:
+                    gen = db.query(DBGeneration).filter_by(id=generation_id).first()
+                    if not gen:
+                        yield f"data: {json.dumps({'status': 'not_found', 'id': generation_id})}\n\n"
+                        return
 
-                payload = {
-                    "id": gen.id,
-                    "status": gen.status or "completed",
-                    "duration": gen.duration,
-                    "error": gen.error,
-                }
-                yield f"data: {json.dumps(payload)}\n\n"
+                    payload = {
+                        "id": gen.id,
+                        "status": gen.status or "completed",
+                        "duration": gen.duration,
+                        "error": gen.error,
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
 
-                if (gen.status or "completed") in ("completed", "failed"):
-                    return
+                    if (gen.status or "completed") in ("completed", "failed"):
+                        return
+                finally:
+                    db.close()
 
                 await asyncio.sleep(1)
         except (BrokenPipeError, ConnectionResetError, asyncio.CancelledError):
