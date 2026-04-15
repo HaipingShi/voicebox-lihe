@@ -7,9 +7,11 @@ the model is already cached.
 
 import asyncio
 import json
+import logging
 import httpx
 from typing import List, Dict, Optional
-from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 async def monitor_sse_stream(model_name: str, timeout: int = 120):
@@ -17,47 +19,48 @@ async def monitor_sse_stream(model_name: str, timeout: int = 120):
     events: List[Dict] = []
     url = f"http://localhost:8000/models/progress/{model_name}"
 
-    print(f"[{_timestamp()}] Connecting to SSE endpoint: {url}")
+    logger.info("Connecting to SSE endpoint: %s", url)
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream("GET", url) as response:
-                print(f"[{_timestamp()}] SSE connected, status: {response.status_code}")
+                logger.info("SSE connected, status: %s", response.status_code)
 
                 if response.status_code != 200:
-                    print(f"[{_timestamp()}] Error: SSE endpoint returned {response.status_code}")
+                    logger.error("SSE endpoint returned %s", response.status_code)
                     return events
 
                 async for line in response.aiter_lines():
                     if not line:
                         continue
 
-                    timestamp = _timestamp()
-
                     if line.startswith("data: "):
                         try:
                             data = json.loads(line[6:])
-                            print(
-                                f"[{timestamp}] → SSE Event: {data['status']:12} {data.get('progress', 0):6.1f}% {data.get('filename', '')}"
+                            logger.info(
+                                "SSE Event: %s %s%% %s",
+                                data['status'],
+                                f"{data.get('progress', 0):6.1f}",
+                                data.get('filename', ''),
                             )
-                            events.append({**data, "_timestamp": timestamp})
+                            events.append({**data})
 
                             # Stop if complete or error
                             if data.get("status") in ("complete", "error"):
-                                print(f"[{timestamp}] → Model {data['status']}!")
+                                logger.info("Model %s!", data['status'])
                                 break
 
                         except json.JSONDecodeError as e:
-                            print(f"[{timestamp}] Error parsing JSON: {e}")
-                            print(f"  Line was: {line}")
+                            logger.error("Error parsing JSON: %s", e)
+                            logger.debug("Line was: %s", line)
 
                     elif line.startswith(": heartbeat"):
-                        print(f"[{timestamp}] ♥ heartbeat")
+                        logger.debug("heartbeat")
 
     except asyncio.TimeoutError:
-        print(f"[{_timestamp()}] SSE monitoring timed out")
+        logger.error("SSE monitoring timed out")
     except Exception as e:
-        print(f"[{_timestamp()}] SSE error: {e}")
+        logger.error("SSE error: %s", e)
 
     return events
 
@@ -66,10 +69,10 @@ async def trigger_generation(profile_id: str, text: str, model_size: str = "1.7B
     """Trigger TTS generation via the API."""
     url = "http://localhost:8000/generate"
 
-    print(f"\n[{_timestamp()}] Triggering generation...")
-    print(f"  Profile: {profile_id}")
-    print(f"  Text: {text[:50]}...")
-    print(f"  Model: {model_size}")
+    logger.info("Triggering generation...")
+    logger.info("Profile: %s", profile_id)
+    logger.info("Text: %s...", text[:50])
+    logger.info("Model: %s", model_size)
 
     try:
         async with httpx.AsyncClient(timeout=120) as client:
@@ -83,26 +86,26 @@ async def trigger_generation(profile_id: str, text: str, model_size: str = "1.7B
                 },
             )
 
-            print(f"[{_timestamp()}] Response: {response.status_code}")
+            logger.info("Response: %s", response.status_code)
 
             if response.status_code == 200:
                 result = response.json()
-                print(f"[{_timestamp()}] ✓ Generation successful!")
-                print(f"  Generation ID: {result.get('id')}")
-                print(f"  Duration: {result.get('duration', 0):.2f}s")
+                logger.info("Generation successful!")
+                logger.info("Generation ID: %s", result.get('id'))
+                logger.info("Duration: %.2fs", result.get('duration', 0))
                 return True, result
             elif response.status_code == 202:
                 # Model is being downloaded
                 result = response.json()
-                print(f"[{_timestamp()}] → Model download in progress")
-                print(f"  Detail: {result}")
+                logger.info("Model download in progress")
+                logger.info("Detail: %s", result)
                 return False, result
             else:
-                print(f"[{_timestamp()}] ✗ Error: {response.text}")
+                logger.error("Error: %s", response.text)
                 return False, None
 
     except Exception as e:
-        print(f"[{_timestamp()}] ✗ Exception: {e}")
+        logger.error("Exception: %s", e)
         return False, None
 
 
@@ -118,7 +121,7 @@ async def get_first_profile():
                 if profiles:
                     return profiles[0]["id"]
     except Exception as e:
-        print(f"Error getting profiles: {e}")
+        logger.error("Error getting profiles: %s", e)
 
     return None
 
@@ -130,13 +133,8 @@ async def check_server():
             response = await client.get("http://localhost:8000/health")
             return response.status_code == 200
     except Exception as e:
-        print(f"Server not running: {e}")
+        logger.error("Server not running: %s", e)
         return False
-
-
-def _timestamp():
-    """Get current timestamp for logging."""
-    return datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
 
 async def test_generation_with_cached_model():
@@ -146,12 +144,12 @@ async def test_generation_with_cached_model():
     This should NOT show any download progress events.
     If it does, that's the UX bug we're trying to fix.
     """
-    print("\n" + "=" * 80)
-    print("TEST CASE 1: Generation with Cached Model")
-    print("=" * 80)
-    print("Expected: No download progress events (or minimal/instant completion)")
-    print("Actual UX Issue: Users see 'started' and 'finished' events even for cached models")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("TEST CASE 1: Generation with Cached Model")
+    logger.info("=" * 80)
+    logger.info("Expected: No download progress events (or minimal/instant completion)")
+    logger.info("Actual UX Issue: Users see 'started' and 'finished' events even for cached models")
+    logger.info("=" * 80)
 
     model_size = "1.7B"
     model_name = f"qwen-tts-{model_size}"
@@ -159,10 +157,10 @@ async def test_generation_with_cached_model():
     # Get a profile
     profile_id = await get_first_profile()
     if not profile_id:
-        print("✗ No voice profiles found. Please create a profile first.")
+        logger.error("No voice profiles found. Please create a profile first.")
         return False
 
-    print(f"\nUsing profile: {profile_id}")
+    logger.info("Using profile: %s", profile_id)
 
     # Start SSE monitor BEFORE triggering generation
     monitor_task = asyncio.create_task(monitor_sse_stream(model_name, timeout=30))
@@ -175,7 +173,7 @@ async def test_generation_with_cached_model():
     success, result = await trigger_generation(profile_id, test_text, model_size)
 
     if not success and result and result.get("downloading"):
-        print("\n⚠ Model is being downloaded. Waiting for download to complete...")
+        logger.warning("Model is being downloaded. Waiting for download to complete...")
         # Wait for SSE monitor to capture download events
         events = await monitor_task
         return events
@@ -199,11 +197,11 @@ async def test_generation_with_fresh_download():
 
     This SHOULD show download progress events.
     """
-    print("\n" + "=" * 80)
-    print("TEST CASE 2: Generation with Model Download")
-    print("=" * 80)
-    print("Expected: Download progress events from 0% to 100%")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("TEST CASE 2: Generation with Model Download")
+    logger.info("=" * 80)
+    logger.info("Expected: Download progress events from 0%% to 100%%")
+    logger.info("=" * 80)
 
     # Use a different model size to force download
     model_size = "0.6B"  # Smaller model for faster testing
@@ -212,11 +210,11 @@ async def test_generation_with_fresh_download():
     # Get a profile
     profile_id = await get_first_profile()
     if not profile_id:
-        print("✗ No voice profiles found. Please create a profile first.")
+        logger.error("No voice profiles found. Please create a profile first.")
         return False
 
-    print(f"\nUsing profile: {profile_id}")
-    print("Note: This will download the model if not cached")
+    logger.info("Using profile: %s", profile_id)
+    logger.info("Note: This will download the model if not cached")
 
     # Start SSE monitor BEFORE triggering generation
     monitor_task = asyncio.create_task(monitor_sse_stream(model_name, timeout=300))
@@ -229,17 +227,17 @@ async def test_generation_with_fresh_download():
     success, result = await trigger_generation(profile_id, test_text, model_size)
 
     if not success and result and result.get("downloading"):
-        print("\n→ Model download initiated. Monitoring progress...")
+        logger.info("Model download initiated. Monitoring progress...")
         # Wait for download to complete
         events = await monitor_task
 
         # Try generation again
-        print(f"\n[{_timestamp()}] Retrying generation after download...")
+        logger.info("Retrying generation after download...")
         await asyncio.sleep(2)
         success, result = await trigger_generation(profile_id, test_text, model_size)
 
         if success:
-            print("✓ Generation successful after download")
+            logger.info("Generation successful after download")
 
         return events
 
@@ -255,48 +253,47 @@ async def test_generation_with_fresh_download():
 
 
 async def main():
-    print("=" * 80)
-    print("TTS Generation Progress Test")
-    print("=" * 80)
-    print("Purpose: Capture exact SSE events during generation to identify UX issues")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("TTS Generation Progress Test")
+    logger.info("=" * 80)
+    logger.info("Purpose: Capture exact SSE events during generation to identify UX issues")
+    logger.info("=" * 80)
 
     # Check if server is running
-    print(f"\n[{_timestamp()}] Checking if server is running...")
+    logger.info("Checking if server is running...")
     if not await check_server():
-        print("✗ Server is not running on http://localhost:8000")
-        print("\nPlease start the server first:")
-        print("  cd backend && python main.py")
+        logger.error("Server is not running on http://localhost:8000")
+        logger.info("Please start the server first:")
+        logger.info("  cd backend && python main.py")
         return False
 
-    print("✓ Server is running")
+    logger.info("Server is running")
 
     # Test Case 1: Cached model
-    print("\n" + "🧪 " * 20)
+    logger.info("-" * 40)
     events_cached = await test_generation_with_cached_model()
 
     # Results for Test Case 1
-    print("\n" + "=" * 80)
-    print("TEST CASE 1 RESULTS: Generation with Cached Model")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("TEST CASE 1 RESULTS: Generation with Cached Model")
+    logger.info("=" * 80)
 
     if not events_cached:
-        print("✓ GOOD: No SSE progress events received")
-        print("  This is the expected behavior for a cached model.")
+        logger.info("GOOD: No SSE progress events received")
+        logger.info("This is the expected behavior for a cached model.")
     else:
-        print(f"⚠ ISSUE FOUND: Received {len(events_cached)} SSE events:")
-        print("\nEvent Timeline:")
+        logger.warning("ISSUE FOUND: Received %d SSE events:", len(events_cached))
+        logger.info("Event Timeline:")
         for i, event in enumerate(events_cached, 1):
-            timestamp = event.pop("_timestamp", "??:??:??.???")
-            print(f"  {i}. [{timestamp}] {event}")
+            logger.info("  %d. %s", i, event)
 
-        print("\n⚠ This explains the UX issue!")
-        print("  Users see progress events even when the model is already cached,")
-        print("  making them think the model is downloading again.")
+        logger.warning("This explains the UX issue!")
+        logger.warning("Users see progress events even when the model is already cached,")
+        logger.warning("making them think the model is downloading again.")
 
-    print("\n" + "=" * 80)
-    print("Test Complete!")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("Test Complete!")
+    logger.info("=" * 80)
 
     return True
 
