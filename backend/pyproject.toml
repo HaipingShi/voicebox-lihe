@@ -39,10 +39,6 @@ select = [
 ]
 
 ignore = [
-    # Allow print() in existing code -- remove items from this list as files
-    # are migrated to logging during the refactor.
-    "T201",   # print() found
-
     # These conflict with the formatter or are too noisy during migration:
     "E501",   # line too long (formatter handles this)
     "RET504", # unnecessary assignment before return
@@ -53,8 +49,8 @@ ignore = [
 
 # Per-file rule overrides.
 [tool.ruff.lint.per-file-ignores]
-# Tests can use assert, print, and magic values freely.
-"tests/**" = ["S101", "T201", "PLR2004", "ERA001"]
+# Tests can use assert, and magic values freely.
+"tests/**" = ["S101", "PLR2004", "ERA001"]
 # __init__.py re-exports are expected to have unused imports.
 "**/__init__.py" = ["F401"]
 # Entry points and scripts legitimately use print.

@@ -40,13 +40,6 @@ if getattr(sys, 'frozen', False):
     if os.path.isdir(_espeak_data):
         os.environ.setdefault('ESPEAK_DATA_PATH', _espeak_data)
 
-# Fast path: handle --version before any heavy imports so the Rust
-# version check doesn't block for 30+ seconds loading torch etc.
-if "--version" in sys.argv:
-    from backend import __version__
-    print(f"voicebox-server {__version__}")
-    sys.exit(0)
-
 import logging
 
 # Set up logging FIRST, before any imports that might fail
@@ -56,6 +49,13 @@ logging.basicConfig(
     stream=sys.stderr,  # Log to stderr so it's captured by Tauri
 )
 logger = logging.getLogger(__name__)
+
+# Fast path: handle --version before any heavy imports so the Rust
+# version check doesn't block for 30+ seconds loading torch etc.
+if "--version" in sys.argv:
+    from backend import __version__
+    logger.info("voicebox-server %s", __version__)
+    sys.exit(0)
 
 # Log startup immediately to confirm binary execution
 logger.info("=" * 60)
